@@ -1,0 +1,156 @@
+---
+title: "Prediction project"
+author: "Thomas Bruno Michelon"
+date: '2022-05-03'
+output: html_document
+---
+
+# Prediction project assigment
+
+Loading packages from a loop:
+
+```{r setup, message=FALSE, warning=FALSE}
+packages <- as.data.frame(c("esquisse", "tidyverse", "dplyr", "AppliedPredictiveModeling", "caret", "pgmm", "rpart", "gbm", "lubridate", "forecast", "e1071"))
+for (i in 1:dim(packages)[1]) {
+  try(library(packages[i, 1], character.only = T))
+}
+```
+
+Loading data:
+
+```{r}
+training <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"), na.strings = c("NA", "#DIV/0!", ""))
+testing <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"), na.strings = c("NA", "#DIV/0!", ""))
+```
+
+
+Set variable "classe" as factor
+
+```{r}
+training <- mutate(training, classe = as.factor(classe))
+```
+
+## Data-split
+
+The testing data comes without label, so in order to evaluate the prediction models, the training set will be split in calibration and prediction set:
+
+```{r}
+set.seed(3455)
+inTrain <- createDataPartition(training$classe, p = 0.7, list = FALSE)
+split_training <- training[inTrain, ]
+split_testing <- training[-inTrain, ]
+dim(split_training)
+dim(split_testing)
+```
+
+## Data cleaning
+
+Since the data frame came with high empty columns and variables not interesting for prediction (e.g., user name), we must provide a clean data set before begin the analysis. In this section it will be also used as data inspection.
+
+###Data cleaning - Removing NA columns
+```{r}
+# Finding columns with more than 50% NA
+NA_cols_index <- which(colMeans(is.na(split_training)) > 0.5)
+# Remove columns
+split_training <- split_training[, -NA_cols_index]
+# Check Dimensions
+dim(split_training)
+```
+
+###Data cleaning - Removing not necessary columns
+```{r}
+# Removing X, user name, new window, num window and, timestamp columns
+split_training <- subset(split_training, select = -c(X, user_name, new_window, num_window, cvtd_timestamp))
+dim(split_training)
+```
+
+
+###Data cleaning - Checking for Near Zero Variances
+```{r}
+nearZeroVar(split_training, saveMetrics = T)
+```
+None NZV found
+
+
+## Pre-processing
+
+After the data cleaning, we should search for high correlated predictors, since high correlation between predictors means high variance and it is bad for the prediction model.
+
+```{r}
+# Correlation matrix without y variable (classe)
+cor_matrix <- cor(subset(split_training, select = -classe))
+# Modify correlation matrix - upper triangular part of the matrix equal 0
+cor_matrix[upper.tri(cor_matrix)] <- 0
+# Modify correlation matrix - diagonal part of the matrix equal 0
+diag(cor_matrix) <- 0
+head(cor_matrix)
+# removing high correlated variables
+split_training_correlation <- split_training[, !apply(
+  cor_matrix,
+  2,
+  function(x) any(abs(x) > 0.9)
+)]
+# Checking dimensions
+dim(split_training_correlation)
+# Set back to original data frame
+split_training <- split_training_correlation
+```
+
+## Prediction model
+### Model 1 - Classification tree
+```{r}
+modCT <- rpart(classe ~ ., data = split_training)
+```
+Model 1 - training accuracy
+```{r}
+# predict training
+predCT_training <- predict(modCT, type = "class")
+# Confusion matrix training
+tableCT_training <- table(predCT_training, split_training$classe)
+# Accuracy training
+sum(diag(tableCT_training)) / sum(tableCT_training)
+```
+
+```{r, fig.dim = c(12,8), warning=FALSE}
+rattle::fancyRpartPlot(modCT)
+```
+
+Model 1 - testing accuracy
+```{r}
+# predict testing
+predCT_testing <- predict(modCT, split_testing, type = "class")
+# Confusion matrix testing
+tableCT_testing <- table(predCT_testing, split_testing$classe)
+# testing accuracy
+sum(diag(tableCT_testing)) / sum(tableCT_testing)
+```
+
+The first model did not provide a good accuracy, we should test another algorithm.
+
+### Model 2 - Random forest model
+```{r}
+modRF <- randomForest::randomForest(classe ~ ., data = split_training)
+```
+
+Model 2 - training accuracy
+```{r}
+# Predict training
+pred_training <- predict(modRF, split_training)
+# Confusion matrix training
+confusionMatrix(pred_training, split_training$classe)
+```
+
+Model 2 - Testing accuracy
+```{r}
+# Predict testing
+pred_testing <- predict(modRF, split_testing)
+confusionMatrix(pred_testing, split_testing$classe)
+```
+
+The final model using random forest algorithm provided high accuracy > 99%. So, it can be used as a prediction model for the testing data frame provided.
+
+Model 2 - Predict on original testing data frame (provide for project)
+```{r}
+pred_validation <- predict(modRF, testing)
+pred_validation
+```
